@@ -1,0 +1,20 @@
+{
+  "name": "Chemical Requisition System",
+  "short_name": "Chem Control",
+  "description": "ระบบเบิกสารเคมีสำหรับใช้งานบนมือถือและ PWA",
+  "lang": "th",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f0f4f8",
+  "theme_color": "#f0f4f8",
+  "icons": [
+    {
+      "src": "./app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
