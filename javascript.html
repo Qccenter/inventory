@@ -1,6 +1,11 @@
 (function () {
+  const APP_CONFIG = {
+    // ใส่ URL ของ Apps Script Web App ตรงนี้
+    apiBaseUrl: "https://script.google.com/macros/s/AKfycbwhR7Pj0J39jUb1XfC2ZULcTFv_MJdjlGCIcoHQupwiTRrzzWpRMxRgQf8lyMM5JGQhfg/exec"
+  };
+
   const state = {
-    apiBaseUrl: localStorage.getItem("chem_api_base_url") || "",
+    apiBaseUrl: String(APP_CONFIG.apiBaseUrl || "").trim().replace(/\?$/, ""),
     token: localStorage.getItem("chem_session_token") || "",
     user: loadJson("chem_session_user"),
     dashboard: [],
@@ -34,12 +39,13 @@
   function cacheElements() {
     [
       "login-shell", "app-shell", "login-form", "login-api-url", "login-username", "login-password",
-      "btn-login", "btn-test-login-api", "page-title", "header-subtitle", "api-status-pill", "user-pill",
+      "register-form", "auth-tab-login", "auth-tab-register", "register-fullname", "register-department", "register-username", "register-password",
+      "btn-login", "btn-register", "page-title", "header-subtitle", "api-status-pill", "user-pill",
       "btn-refresh", "btn-logout", "dashboard-loading", "dashboard-container", "expiring-widget", "expiring-items",
       "history-search", "history-list", "report-month", "admin-panel", "master-list", "user-list", "sys-token",
-      "settings-api-url", "camera-status-text", "tab-inventory", "tab-history", "tab-settings", "tab-analytics",
+      "settings-api-url-text", "camera-status-text", "tab-inventory", "tab-history", "tab-settings", "tab-analytics",
       "stat-in", "stat-out", "stat-value", "stat-expiry", "usageChart", "admin-master-search", "admin-user-search",
-      "btn-save-api-url", "btn-test-api", "btn-request-camera", "btn-check-camera", "btn-open-master-modal",
+      "btn-test-api", "btn-request-camera", "btn-check-camera", "btn-open-master-modal",
       "btn-open-user-modal", "btn-save-token", "btn-export-csv", "btn-monthly-report", "quick-withdraw",
       "quick-receive", "quick-dispose", "btn-receive-current-chem", "reader", "w_scan", "w_name", "w_qty",
       "w_lot_hint", "w_note", "btn-resolve-scan", "r_name", "r_lot", "r_qty", "r_mfg", "r_exp", "r_note",
@@ -56,13 +62,14 @@
 
   function bindEvents() {
     ui["login-form"].addEventListener("submit", submitLogin);
-    ui["btn-test-login-api"].addEventListener("click", testApiConnectionFromLogin);
+    ui["register-form"].addEventListener("submit", submitRegister);
+    ui["auth-tab-login"].addEventListener("click", function () { switchAuthTab("login"); });
+    ui["auth-tab-register"].addEventListener("click", function () { switchAuthTab("register"); });
     ui["btn-refresh"].addEventListener("click", refreshCurrentView);
     ui["btn-logout"].addEventListener("click", logout);
     ui["history-search"].addEventListener("input", renderHistory);
     ui["admin-master-search"].addEventListener("input", renderMasterList);
     ui["admin-user-search"].addEventListener("input", renderUserList);
-    ui["btn-save-api-url"].addEventListener("click", saveApiUrlFromSettings);
     ui["btn-test-api"].addEventListener("click", testApiConnectionFromSettings);
     ui["btn-request-camera"].addEventListener("click", requestCameraPermission);
     ui["btn-check-camera"].addEventListener("click", refreshCameraStatus);
@@ -97,8 +104,9 @@
   }
 
   function hydrateSavedSettings() {
-    ui["login-api-url"].value = state.apiBaseUrl;
-    ui["settings-api-url"].value = state.apiBaseUrl;
+    if (ui["settings-api-url-text"]) {
+      ui["settings-api-url-text"].textContent = state.apiBaseUrl || "ยังไม่ได้ตั้งค่าใน javascript.html";
+    }
   }
 
   function setDefaultMonth() {
@@ -123,16 +131,14 @@
 
   async function submitLogin(event) {
     event.preventDefault();
-    const apiUrl = ui["login-api-url"].value.trim();
     const username = ui["login-username"].value.trim();
     const password = ui["login-password"].value;
 
-    if (!apiUrl || !username || !password) {
-      toast("กรอก API URL, Username และ Password ให้ครบ", "warning");
+    if (!username || !password) {
+      toast("กรอก Username และ Password ให้ครบ", "warning");
       return;
     }
 
-    saveApiBaseUrl(apiUrl);
     setButtonLoading("btn-login", true, "เข้าสู่ระบบ");
 
     try {
@@ -154,23 +160,40 @@
     }
   }
 
-  async function testApiConnectionFromLogin() {
-    const apiUrl = ui["login-api-url"].value.trim();
-    if (!apiUrl) {
-      toast("กรุณาใส่ Apps Script URL ก่อน", "warning");
+  async function submitRegister(event) {
+    event.preventDefault();
+    const fullName = ui["register-fullname"].value.trim();
+    const department = ui["register-department"].value.trim();
+    const username = ui["register-username"].value.trim();
+    const password = ui["register-password"].value;
+
+    if (!fullName || !department || !username || !password) {
+      toast("กรอกข้อมูลสมัครสมาชิกให้ครบ", "warning");
       return;
     }
-    saveApiBaseUrl(apiUrl);
-    await testApiConnection();
+
+    setButtonLoading("btn-register", true, "สมัครสมาชิก");
+    try {
+      const passwordHash = await sha256Hex(password);
+      const response = await api("register", {
+        fullName: fullName,
+        department: department,
+        username: username,
+        passwordHash: passwordHash
+      }, { requiresAuth: false });
+      toast(response.message || "สมัครสมาชิกสำเร็จ", "success");
+      ui["register-form"].reset();
+      ui["login-username"].value = username;
+      ui["login-password"].value = "";
+      switchAuthTab("login");
+    } catch (error) {
+      showApiError(error);
+    } finally {
+      setButtonLoading("btn-register", false, "สมัครสมาชิก");
+    }
   }
 
   async function testApiConnectionFromSettings() {
-    const apiUrl = ui["settings-api-url"].value.trim();
-    if (!apiUrl) {
-      toast("กรุณาใส่ Apps Script URL ก่อน", "warning");
-      return;
-    }
-    saveApiBaseUrl(apiUrl);
     await testApiConnection();
   }
 
@@ -191,28 +214,6 @@
     }
   }
 
-  function saveApiUrlFromSettings() {
-    const apiUrl = ui["settings-api-url"].value.trim();
-    if (!apiUrl) {
-      toast("กรุณาใส่ Apps Script URL ก่อน", "warning");
-      return;
-    }
-    saveApiBaseUrl(apiUrl);
-    toast("บันทึก API URL แล้ว", "success");
-  }
-
-  function saveApiBaseUrl(url) {
-    state.apiBaseUrl = normalizeApiUrl(url);
-    localStorage.setItem("chem_api_base_url", state.apiBaseUrl);
-    ui["login-api-url"].value = state.apiBaseUrl;
-    ui["settings-api-url"].value = state.apiBaseUrl;
-    setApiStatus("บันทึก API URL แล้ว", "ok");
-  }
-
-  function normalizeApiUrl(url) {
-    return url.replace(/\?$/, "");
-  }
-
   function showLoginShell() {
     ui["login-shell"].classList.remove("hidden-force");
     ui["app-shell"].classList.add("hidden-force");
@@ -221,7 +222,14 @@
   function showAppShell() {
     ui["login-shell"].classList.add("hidden-force");
     ui["app-shell"].classList.remove("hidden-force");
-    ui["settings-api-url"].value = state.apiBaseUrl;
+  }
+
+  function switchAuthTab(tab) {
+    const isLogin = tab === "login";
+    ui["login-form"].classList.toggle("hidden-force", !isLogin);
+    ui["register-form"].classList.toggle("hidden-force", isLogin);
+    ui["auth-tab-login"].className = isLogin ? "flex-1 bg-blue-600 text-white font-black rounded-2xl py-3" : "flex-1 text-slate-600 font-black rounded-2xl py-3";
+    ui["auth-tab-register"].className = isLogin ? "flex-1 text-slate-600 font-black rounded-2xl py-3" : "flex-1 bg-slate-900 text-white font-black rounded-2xl py-3";
   }
 
   function updateUserHeader() {
@@ -459,7 +467,9 @@
 
   async function loadSettingsData() {
     if (!state.user) return;
-    ui["settings-api-url"].value = state.apiBaseUrl;
+    if (ui["settings-api-url-text"]) {
+      ui["settings-api-url-text"].textContent = state.apiBaseUrl || "ยังไม่ได้ตั้งค่าใน javascript.html";
+    }
 
     if ((state.user.role || "").toUpperCase() !== "ADMIN") {
       return;
@@ -1110,7 +1120,7 @@
     options = options || {};
     const requiresAuth = options.requiresAuth !== false;
     if (!state.apiBaseUrl) {
-      throw new Error("ยังไม่ได้ตั้งค่า Apps Script API URL");
+      throw new Error("ยังไม่ได้ตั้งค่า Apps Script API URL ใน javascript.html");
     }
 
     const query = Object.assign({}, params, { action: action });
