@@ -1,0 +1,1278 @@
+(function () {
+  const state = {
+    apiBaseUrl: localStorage.getItem("chem_api_base_url") || "",
+    token: localStorage.getItem("chem_session_token") || "",
+    user: loadJson("chem_session_user"),
+    dashboard: [],
+    logs: [],
+    masterRows: [],
+    userRows: [],
+    expiringRows: [],
+    currentTab: "inventory",
+    currentChemical: "",
+    chart: null,
+    scanner: null,
+    cameraPermission: "unknown",
+    scanFormats: []
+  };
+
+  const ui = {};
+
+  function init() {
+    cacheElements();
+    bindEvents();
+    hydrateSavedSettings();
+    setDefaultMonth();
+    refreshCameraStatus();
+    if (state.token && state.apiBaseUrl) {
+      restoreSession();
+      return;
+    }
+    showLoginShell();
+  }
+
+  function cacheElements() {
+    [
+      "login-shell", "app-shell", "login-form", "login-api-url", "login-username", "login-password",
+      "btn-login", "btn-test-login-api", "page-title", "header-subtitle", "api-status-pill", "user-pill",
+      "btn-refresh", "btn-logout", "dashboard-loading", "dashboard-container", "expiring-widget", "expiring-items",
+      "history-search", "history-list", "report-month", "admin-panel", "master-list", "user-list", "sys-token",
+      "settings-api-url", "camera-status-text", "tab-inventory", "tab-history", "tab-settings", "tab-analytics",
+      "stat-in", "stat-out", "stat-value", "stat-expiry", "usageChart", "admin-master-search", "admin-user-search",
+      "btn-save-api-url", "btn-test-api", "btn-request-camera", "btn-check-camera", "btn-open-master-modal",
+      "btn-open-user-modal", "btn-save-token", "btn-export-csv", "btn-monthly-report", "quick-withdraw",
+      "quick-receive", "quick-dispose", "btn-receive-current-chem", "reader", "w_scan", "w_name", "w_qty",
+      "w_lot_hint", "w_note", "btn-resolve-scan", "r_name", "r_lot", "r_qty", "r_mfg", "r_exp", "r_note",
+      "d_name", "d_qty", "d_note", "adj_lotId", "adj_lotNo", "adj_exp", "adj_balance", "adj_note",
+      "old_u_name", "u_name", "u_full_name", "u_dept", "u_password", "u_role", "u_status", "old_m_name",
+      "m_name", "m_min", "m_hazard", "m_location", "m_sds", "m_supplier", "m_price", "details-title",
+      "details-subtitle", "details-list", "modal-withdraw", "modal-receive", "modal-dispose", "modal-adjust",
+      "modal-user", "modal-master", "modal-details", "form-withdraw", "form-receive", "form-dispose",
+      "form-adjust", "form-user", "form-master"
+    ].forEach(function (id) {
+      ui[id] = document.getElementById(id);
+    });
+  }
+
+  function bindEvents() {
+    ui["login-form"].addEventListener("submit", submitLogin);
+    ui["btn-test-login-api"].addEventListener("click", testApiConnectionFromLogin);
+    ui["btn-refresh"].addEventListener("click", refreshCurrentView);
+    ui["btn-logout"].addEventListener("click", logout);
+    ui["history-search"].addEventListener("input", renderHistory);
+    ui["admin-master-search"].addEventListener("input", renderMasterList);
+    ui["admin-user-search"].addEventListener("input", renderUserList);
+    ui["btn-save-api-url"].addEventListener("click", saveApiUrlFromSettings);
+    ui["btn-test-api"].addEventListener("click", testApiConnectionFromSettings);
+    ui["btn-request-camera"].addEventListener("click", requestCameraPermission);
+    ui["btn-check-camera"].addEventListener("click", refreshCameraStatus);
+    ui["btn-open-master-modal"].addEventListener("click", function () { openMasterModal(); });
+    ui["btn-open-user-modal"].addEventListener("click", function () { openUserModal(); });
+    ui["btn-save-token"].addEventListener("click", saveLineToken);
+    ui["btn-export-csv"].addEventListener("click", exportCSV);
+    ui["btn-monthly-report"].addEventListener("click", downloadMonthlyReport);
+    ui["quick-withdraw"].addEventListener("click", function () { openModal("withdraw"); });
+    ui["quick-receive"].addEventListener("click", function () { openModal("receive"); });
+    ui["quick-dispose"].addEventListener("click", function () { openModal("dispose"); });
+    ui["btn-receive-current-chem"].addEventListener("click", openReceiveForCurrentChem);
+    ui["btn-resolve-scan"].addEventListener("click", resolveScannedCode);
+    ui["form-withdraw"].addEventListener("submit", submitWithdraw);
+    ui["form-receive"].addEventListener("submit", submitReceive);
+    ui["form-dispose"].addEventListener("submit", submitDispose);
+    ui["form-adjust"].addEventListener("submit", submitAdjust);
+    ui["form-user"].addEventListener("submit", submitUser);
+    ui["form-master"].addEventListener("submit", submitMaster);
+
+    document.querySelectorAll("[data-tab]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        switchTab(button.getAttribute("data-tab"));
+      });
+    });
+
+    document.querySelectorAll("[data-close-modal]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        closeModal(button.getAttribute("data-close-modal"));
+      });
+    });
+  }
+
+  function hydrateSavedSettings() {
+    ui["login-api-url"].value = state.apiBaseUrl;
+    ui["settings-api-url"].value = state.apiBaseUrl;
+  }
+
+  function setDefaultMonth() {
+    const now = new Date();
+    ui["report-month"].value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  }
+
+  async function restoreSession() {
+    try {
+      setApiStatus("กำลังเชื่อมต่อ API...", "warn");
+      const response = await api("session");
+      state.user = response.user;
+      showAppShell();
+      updateUserHeader();
+      await refreshCurrentView();
+    } catch (error) {
+      clearSession();
+      showLoginShell();
+      toast("Session หมดอายุ กรุณาเข้าสู่ระบบใหม่", "warning");
+    }
+  }
+
+  async function submitLogin(event) {
+    event.preventDefault();
+    const apiUrl = ui["login-api-url"].value.trim();
+    const username = ui["login-username"].value.trim();
+    const password = ui["login-password"].value;
+
+    if (!apiUrl || !username || !password) {
+      toast("กรอก API URL, Username และ Password ให้ครบ", "warning");
+      return;
+    }
+
+    saveApiBaseUrl(apiUrl);
+    setButtonLoading("btn-login", true, "เข้าสู่ระบบ");
+
+    try {
+      const passwordHash = await sha256Hex(password);
+      const response = await api("login", { username: username, passwordHash: passwordHash }, { requiresAuth: false });
+      state.token = response.token;
+      state.user = response.user;
+      localStorage.setItem("chem_session_token", state.token);
+      localStorage.setItem("chem_session_user", JSON.stringify(state.user));
+      ui["login-password"].value = "";
+      showAppShell();
+      updateUserHeader();
+      await refreshCurrentView();
+      toast("เข้าสู่ระบบสำเร็จ", "success");
+    } catch (error) {
+      showApiError(error);
+    } finally {
+      setButtonLoading("btn-login", false, "เข้าสู่ระบบ");
+    }
+  }
+
+  async function testApiConnectionFromLogin() {
+    const apiUrl = ui["login-api-url"].value.trim();
+    if (!apiUrl) {
+      toast("กรุณาใส่ Apps Script URL ก่อน", "warning");
+      return;
+    }
+    saveApiBaseUrl(apiUrl);
+    await testApiConnection();
+  }
+
+  async function testApiConnectionFromSettings() {
+    const apiUrl = ui["settings-api-url"].value.trim();
+    if (!apiUrl) {
+      toast("กรุณาใส่ Apps Script URL ก่อน", "warning");
+      return;
+    }
+    saveApiBaseUrl(apiUrl);
+    await testApiConnection();
+  }
+
+  async function testApiConnection() {
+    try {
+      const response = await api("system-status", {}, { requiresAuth: false });
+      setApiStatus("API พร้อมใช้งาน", "ok");
+      Swal.fire({
+        icon: "success",
+        title: "เชื่อมต่อสำเร็จ",
+        html: `<div class="text-left text-sm">
+          <p><strong>Spreadsheet ID:</strong> ${escapeHtml(response.spreadsheetId || "-")}</p>
+          <p class="mt-2"><strong>Sheets:</strong> ${(response.sheets || []).map(escapeHtml).join(", ")}</p>
+        </div>`
+      });
+    } catch (error) {
+      showApiError(error);
+    }
+  }
+
+  function saveApiUrlFromSettings() {
+    const apiUrl = ui["settings-api-url"].value.trim();
+    if (!apiUrl) {
+      toast("กรุณาใส่ Apps Script URL ก่อน", "warning");
+      return;
+    }
+    saveApiBaseUrl(apiUrl);
+    toast("บันทึก API URL แล้ว", "success");
+  }
+
+  function saveApiBaseUrl(url) {
+    state.apiBaseUrl = normalizeApiUrl(url);
+    localStorage.setItem("chem_api_base_url", state.apiBaseUrl);
+    ui["login-api-url"].value = state.apiBaseUrl;
+    ui["settings-api-url"].value = state.apiBaseUrl;
+    setApiStatus("บันทึก API URL แล้ว", "ok");
+  }
+
+  function normalizeApiUrl(url) {
+    return url.replace(/\?$/, "");
+  }
+
+  function showLoginShell() {
+    ui["login-shell"].classList.remove("hidden-force");
+    ui["app-shell"].classList.add("hidden-force");
+  }
+
+  function showAppShell() {
+    ui["login-shell"].classList.add("hidden-force");
+    ui["app-shell"].classList.remove("hidden-force");
+    ui["settings-api-url"].value = state.apiBaseUrl;
+  }
+
+  function updateUserHeader() {
+    if (!state.user) return;
+    ui["user-pill"].classList.remove("hidden-force");
+    ui["user-pill"].textContent = `${state.user.fullName || state.user.username} • ${state.user.role}`;
+    const isAdmin = (state.user.role || "").toUpperCase() === "ADMIN";
+    ui["admin-panel"].classList.toggle("hidden-force", !isAdmin);
+  }
+
+  function clearSession() {
+    state.token = "";
+    state.user = null;
+    localStorage.removeItem("chem_session_token");
+    localStorage.removeItem("chem_session_user");
+  }
+
+  function logout() {
+    stopScanner();
+    clearSession();
+    showLoginShell();
+  }
+
+  async function refreshCurrentView() {
+    if (!state.token) return;
+    switchTab(state.currentTab, true);
+    await refreshDashboard();
+  }
+
+  async function refreshDashboard() {
+    ui["dashboard-loading"].classList.remove("hidden-force");
+    ui["dashboard-container"].classList.add("hidden-force");
+    try {
+      const dashboardPromise = api("dashboard");
+      const expiringPromise = api("expiring");
+      const [dashboardResponse, expiringResponse] = await Promise.all([dashboardPromise, expiringPromise]);
+      state.dashboard = dashboardResponse.items || [];
+      state.expiringRows = expiringResponse.items || [];
+      renderDashboard();
+      renderExpiringSoon();
+      if (state.currentTab === "history") {
+        await loadHistory();
+      }
+      if (state.currentTab === "settings") {
+        await loadSettingsData();
+      }
+      if (state.currentTab === "analytics") {
+        await fetchAnalytics();
+      }
+    } catch (error) {
+      showApiError(error);
+    } finally {
+      ui["dashboard-loading"].classList.add("hidden-force");
+      ui["dashboard-container"].classList.remove("hidden-force");
+    }
+  }
+
+  async function switchTab(tabId, skipTabLoad) {
+    state.currentTab = tabId;
+    document.querySelectorAll(".view-page").forEach(function (page) {
+      page.classList.remove("active");
+    });
+    document.querySelectorAll(".tab-item").forEach(function (tab) {
+      tab.classList.remove("active");
+    });
+
+    const page = document.getElementById(`page-${tabId}`);
+    const tab = document.getElementById(`tab-${tabId}`);
+    if (page) page.classList.add("active");
+    if (tab) tab.classList.add("active");
+
+    const titles = {
+      inventory: ["LAB INVENTORY", "Chemical requisition dashboard"],
+      history: ["TRANSACTION LOGS", "รายการเบิก รับ ปรับ และทำลายสารเคมี"],
+      settings: ["SYSTEM SETTINGS", "Connection, camera permission, master data and user management"],
+      analytics: ["REPORTS", "ภาพรวมการใช้งานสารเคมี"]
+    };
+    ui["page-title"].textContent = titles[tabId][0];
+    ui["header-subtitle"].textContent = titles[tabId][1];
+
+    if (skipTabLoad) return;
+    if (tabId === "history") {
+      await loadHistory();
+    } else if (tabId === "settings") {
+      await loadSettingsData();
+    } else if (tabId === "analytics") {
+      await fetchAnalytics();
+    }
+  }
+
+  function renderDashboard() {
+    const container = ui["dashboard-container"];
+    container.innerHTML = "";
+
+    if (!state.dashboard.length) {
+      container.innerHTML = `<div class="col-span-full empty-state">ยังไม่มีข้อมูลสต็อกในระบบ</div>`;
+      updateExpiryForecast();
+      return;
+    }
+
+    state.dashboard.forEach(function (item, index) {
+      const chemClass = getChemicalClass(item.name);
+      const available = Number(item.stats.available || 0);
+      const minStock = Number(item.minStock || 0);
+      const isOOS = available === 0;
+      const isLow = !isOOS && available <= minStock;
+
+      const card = document.createElement("div");
+      card.className = `glass glass-card p-6 rounded-3xl ${chemClass} ${isOOS ? "out-of-stock" : (isLow ? "low-stock" : "")} animate-in cursor-pointer`;
+      card.setAttribute("data-badge", isOOS ? "OUT OF STOCK" : (isLow ? "LOW STOCK" : ""));
+      card.style.animationDelay = `${index * 0.05}s`;
+      card.innerHTML = `
+        <div class="flex justify-between items-start mb-4">
+          <div class="flex gap-2">
+            <span class="text-2xl">${getHazardIcon(item.hazard)}</span>
+            <div>
+              <h3 class="font-black text-lg text-slate-800 leading-tight">${escapeHtml(item.name)}</h3>
+              <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">📍 ${escapeHtml(item.location || "-")}</p>
+            </div>
+          </div>
+          <div class="text-right">
+            <div class="flex items-baseline justify-end">
+              <span class="text-2xl font-black ${isOOS ? "text-rose-500" : "text-slate-800"}">${available}</span>
+              <span class="text-[10px] font-bold text-slate-300 ml-1">ขวด</span>
+            </div>
+            <p class="text-[10px] text-slate-400 font-bold uppercase">Min ${minStock}</p>
+          </div>
+        </div>
+        <div class="space-y-2 text-sm text-slate-600">
+          <p><strong>SDS:</strong> ${item.sds ? `<a class="text-blue-600 underline" target="_blank" href="${escapeHtml(item.sds)}">Open</a>` : "-"}</p>
+          <p><strong>Supplier:</strong> ${escapeHtml(item.supplier || "-")}</p>
+          <p><strong>Unit Price:</strong> ฿${Number(item.price || 0).toLocaleString()}</p>
+        </div>
+        <div class="flex gap-2 mt-5">
+          <button class="action-open-withdraw flex-1 bg-blue-600 text-white text-[10px] font-black py-2 rounded-xl shadow-lg">WITHDRAW</button>
+          <button class="action-open-receive w-24 bg-emerald-600 text-white text-[10px] font-black py-2 rounded-xl shadow-lg">RECEIVE</button>
+        </div>
+      `;
+      card.addEventListener("click", function () {
+        showLotDetails(item.name);
+      });
+      card.querySelector(".action-open-withdraw").addEventListener("click", function (event) {
+        event.stopPropagation();
+        ui["w_name"].value = item.name;
+        openModal("withdraw");
+      });
+      card.querySelector(".action-open-receive").addEventListener("click", function (event) {
+        event.stopPropagation();
+        ui["r_name"].value = item.name;
+        openModal("receive");
+      });
+      container.appendChild(card);
+    });
+
+    updateExpiryForecast();
+  }
+
+  function renderExpiringSoon() {
+    const widget = ui["expiring-widget"];
+    const container = ui["expiring-items"];
+    if (!state.expiringRows.length) {
+      widget.classList.add("hidden-force");
+      return;
+    }
+
+    widget.classList.remove("hidden-force");
+    container.innerHTML = "";
+    state.expiringRows.forEach(function (item) {
+      const expDate = new Date(item.exp);
+      const days = Math.ceil((expDate.getTime() - Date.now()) / 86400000);
+      const box = document.createElement("div");
+      box.className = "flex-shrink-0 glass-card bg-white p-3 rounded-2xl border border-rose-100 min-w-[180px] shadow-sm";
+      box.innerHTML = `
+        <p class="text-[10px] font-black text-slate-400 uppercase truncate">${escapeHtml(item.name)}</p>
+        <p class="text-xs font-bold text-rose-600">EXP: ${formatDate(item.exp)}</p>
+        <div class="flex justify-between items-end mt-2">
+          <span class="text-[9px] font-bold text-slate-300">Lot: ${escapeHtml(item.lotNo || item.id || "-")}</span>
+          <span class="bg-rose-100 text-rose-700 text-[8px] font-black px-2 py-0.5 rounded-full">${days} d</span>
+        </div>
+      `;
+      container.appendChild(box);
+    });
+  }
+
+  async function loadHistory() {
+    ui["history-list"].innerHTML = `<div class="empty-state">กำลังโหลดประวัติรายการ...</div>`;
+    try {
+      const response = await api("logs");
+      state.logs = (response.rows || []).slice().reverse();
+      renderHistory();
+    } catch (error) {
+      showApiError(error);
+    }
+  }
+
+  function renderHistory() {
+    const search = ui["history-search"].value.trim().toLowerCase();
+    const list = ui["history-list"];
+    const rows = state.logs.filter(function (row) {
+      const stack = [row.type, row.name, row.user, row.note, row.refId].join(" ").toLowerCase();
+      return stack.includes(search);
+    });
+
+    if (!rows.length) {
+      list.innerHTML = `<div class="empty-state">ไม่พบรายการที่ตรงกับคำค้น</div>`;
+      return;
+    }
+
+    list.innerHTML = rows.map(function (row) {
+      const type = String(row.type || "").toUpperCase();
+      const color = type === "IN" ? "text-emerald-500" : (type === "OUT" ? "text-blue-500" : (type === "ADJUST" ? "text-amber-500" : "text-rose-500"));
+      const icon = type === "IN" ? "📥" : (type === "OUT" ? "📤" : (type === "ADJUST" ? "⚖️" : "🗑️"));
+      return `
+        <div class="glass p-4 rounded-2xl flex justify-between items-center animate-in">
+          <div class="flex items-center gap-4">
+            <div class="w-10 h-10 rounded-xl bg-white flex items-center justify-center text-xl shadow-sm">${icon}</div>
+            <div>
+              <p class="font-black text-slate-800">${escapeHtml(row.name || "-")}</p>
+              <div class="flex flex-wrap gap-2 text-[10px] items-center">
+                <span class="font-black ${color}">${escapeHtml(type)}</span>
+                <span class="text-slate-300">|</span>
+                <span class="text-slate-400">${formatDateTime(row.timestamp)}</span>
+                <span class="text-slate-400">by ${escapeHtml(row.user || "-")}</span>
+              </div>
+            </div>
+          </div>
+          <div class="text-right">
+            <p class="font-black text-lg ${color}">${Number(row.qty || 0) > 0 ? "" : ""}${row.qty}</p>
+            <p class="text-[9px] text-slate-300 font-bold uppercase">${escapeHtml(row.note || "Normal")}</p>
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  async function loadSettingsData() {
+    if (!state.user) return;
+    ui["settings-api-url"].value = state.apiBaseUrl;
+
+    if ((state.user.role || "").toUpperCase() !== "ADMIN") {
+      return;
+    }
+
+    try {
+      const [masterResponse, userResponse, configResponse] = await Promise.all([
+        api("master-list"),
+        api("users"),
+        api("config")
+      ]);
+      state.masterRows = masterResponse.rows || [];
+      state.userRows = userResponse.rows || [];
+      ui["sys-token"].value = (configResponse.config || {}).LINE_TOKEN || "";
+      renderMasterList();
+      renderUserList();
+    } catch (error) {
+      showApiError(error);
+    }
+  }
+
+  function renderMasterList() {
+    const list = ui["master-list"];
+    if (!list) return;
+    const search = ui["admin-master-search"].value.trim().toLowerCase();
+    const filtered = state.masterRows.filter(function (row) {
+      return [row.name, row.location, row.supplier, row.hazard].join(" ").toLowerCase().includes(search);
+    });
+    if (!filtered.length) {
+      list.innerHTML = `<div class="empty-state">No chemicals found.</div>`;
+      return;
+    }
+
+    list.innerHTML = filtered.map(function (row) {
+      const dashboardItem = state.dashboard.find(function (item) { return item.name === row.name; });
+      const balance = dashboardItem ? Number(dashboardItem.stats.available || 0) : 0;
+      const statusColor = balance <= Number(row.minStock || 0) ? "text-rose-500" : "text-emerald-500";
+      return `
+        <div class="glass p-5 rounded-3xl flex justify-between items-center group hover:bg-white transition-colors">
+          <div class="flex gap-4">
+            <div class="text-2xl opacity-50 group-hover:opacity-100 transition-opacity">${getHazardIcon(row.hazard)}</div>
+            <div>
+              <h4 class="font-black text-slate-800">${escapeHtml(row.name)}</h4>
+              <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                📍 ${escapeHtml(row.location || "-")} | Total: <span class="${statusColor}">${balance}</span> / min ${row.minStock}
+              </p>
+            </div>
+          </div>
+          <div class="flex gap-2 items-center">
+            <button class="action-lots p-2 text-blue-300 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all">📦</button>
+            <button class="action-delete p-2 text-rose-300 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all">🗑️</button>
+            <button class="action-edit text-blue-600 font-black text-[10px] uppercase tracking-widest bg-blue-50 px-4 py-2 rounded-xl">Edit</button>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    Array.from(list.children).forEach(function (rowElement, index) {
+      const row = filtered[index];
+      rowElement.querySelector(".action-lots").addEventListener("click", function () {
+        showLotDetails(row.name);
+      });
+      rowElement.querySelector(".action-delete").addEventListener("click", function () {
+        deleteMasterItem(row.name);
+      });
+      rowElement.querySelector(".action-edit").addEventListener("click", function () {
+        openMasterModal(row);
+      });
+    });
+  }
+
+  function renderUserList() {
+    const list = ui["user-list"];
+    if (!list) return;
+    const search = ui["admin-user-search"].value.trim().toLowerCase();
+    const filtered = state.userRows.filter(function (row) {
+      return [row.username, row.fullName, row.department, row.role].join(" ").toLowerCase().includes(search);
+    });
+    if (!filtered.length) {
+      list.innerHTML = `<div class="empty-state">No users found.</div>`;
+      return;
+    }
+
+    list.innerHTML = filtered.map(function (row) {
+      const statusColor = row.status === "ACTIVE" ? "bg-emerald-50 text-emerald-600" : "bg-slate-50 text-slate-400";
+      return `
+        <div class="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 flex items-center justify-between group hover:border-blue-200 transition-all">
+          <div class="flex items-center gap-4">
+            <div class="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center text-xl">👤</div>
+            <div>
+              <h4 class="font-black text-slate-800">${escapeHtml(row.fullName)}</h4>
+              <p class="text-xs text-slate-400 font-bold">${escapeHtml(row.username)} • ${escapeHtml(row.department)} • ${escapeHtml(row.role)}</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <span class="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${statusColor}">${escapeHtml(row.status)}</span>
+            <div class="flex opacity-0 group-hover:opacity-100 transition-all gap-1">
+              <button class="action-delete p-2 text-rose-300 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all">🗑️</button>
+              <button class="action-edit p-2 text-slate-300 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all">✏️</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    Array.from(list.children).forEach(function (rowElement, index) {
+      const row = filtered[index];
+      rowElement.querySelector(".action-delete").addEventListener("click", function () {
+        deleteUser(row.username);
+      });
+      rowElement.querySelector(".action-edit").addEventListener("click", function () {
+        openUserModal(row);
+      });
+    });
+  }
+
+  async function fetchAnalytics() {
+    try {
+      const response = await api("analytics");
+      ui["stat-in"].textContent = response.IN || 0;
+      ui["stat-out"].textContent = response.OUT || 0;
+      ui["stat-value"].textContent = "฿" + state.dashboard.reduce(function (sum, item) {
+        return sum + Number(item.price || 0) * Number(item.stats.available || 0);
+      }, 0).toLocaleString();
+      updateExpiryForecast();
+      renderAnalyticsChart(response.monthly || {});
+    } catch (error) {
+      showApiError(error);
+    }
+  }
+
+  function renderAnalyticsChart(monthlyData) {
+    const canvas = ui["usageChart"];
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (state.chart) {
+      state.chart.destroy();
+    }
+
+    const labels = Object.keys(monthlyData).sort();
+    state.chart = new Chart(ctx, {
+      type: "bar",
+      data: {
+        labels: labels,
+        datasets: [
+          { label: "รับเข้า", data: labels.map(function (key) { return monthlyData[key].IN || 0; }), backgroundColor: "#10b981", borderRadius: 6 },
+          { label: "เบิกออก", data: labels.map(function (key) { return monthlyData[key].OUT || 0; }), backgroundColor: "#3b82f6", borderRadius: 6 },
+          { label: "ทำลาย", data: labels.map(function (key) { return monthlyData[key].DISPOSAL || 0; }), backgroundColor: "#f43f5e", borderRadius: 6 },
+          { label: "ปรับยอด", data: labels.map(function (key) { return monthlyData[key].ADJUST || 0; }), backgroundColor: "#f59e0b", borderRadius: 6 }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { position: "top", labels: { font: { weight: "bold" } } }
+        },
+        scales: {
+          y: { beginAtZero: true, grid: { display: false } },
+          x: { grid: { display: false } }
+        }
+      }
+    });
+  }
+
+  function updateExpiryForecast() {
+    if (!state.dashboard.length) {
+      ui["stat-expiry"].textContent = "-";
+      return;
+    }
+    let next = null;
+    state.dashboard.forEach(function (item) {
+      if (!item.stats.nextExp) return;
+      if (!next || new Date(item.stats.nextExp) < new Date(next.stats.nextExp)) {
+        next = item;
+      }
+    });
+    ui["stat-expiry"].textContent = next ? `${next.name} (${formatDate(next.stats.nextExp)})` : "-";
+  }
+
+  async function showLotDetails(name) {
+    state.currentChemical = name;
+    ui["details-title"].textContent = name;
+    ui["details-subtitle"].textContent = "Lot-level breakdown and tracking";
+    ui["details-list"].innerHTML = `<tr><td colspan="5" class="py-10 text-center animate-pulse">Loading lots...</td></tr>`;
+    openModal("details");
+    try {
+      const response = await api("stock-details", { name: name });
+      const rows = response.items || [];
+      if (!rows.length) {
+        ui["details-list"].innerHTML = `<tr><td colspan="5" class="py-10 text-center text-slate-400">No active stock for this item.</td></tr>`;
+        return;
+      }
+      ui["details-list"].innerHTML = rows.map(function (row) {
+        return `
+          <tr class="border-b border-slate-100">
+            <td class="py-4 font-black text-slate-700">${escapeHtml(row.id)}</td>
+            <td class="py-4 text-slate-600">${escapeHtml(row.lotNo || "-")}</td>
+            <td class="py-4 text-slate-600">${formatDate(row.exp)}</td>
+            <td class="py-4 text-center font-black text-slate-800">${row.balance}</td>
+            <td class="py-4 text-right">
+              <button class="action-adjust bg-blue-50 text-blue-600 px-3 py-2 rounded-xl text-[10px] font-black uppercase">Adjust</button>
+            </td>
+          </tr>
+        `;
+      }).join("");
+      Array.from(ui["details-list"].querySelectorAll(".action-adjust")).forEach(function (button, index) {
+        button.addEventListener("click", function () {
+          openAdjustModal(rows[index]);
+        });
+      });
+    } catch (error) {
+      showApiError(error);
+    }
+  }
+
+  function openReceiveForCurrentChem() {
+    closeModal("details");
+    ui["r_name"].value = state.currentChemical || "";
+    openModal("receive");
+  }
+
+  function openAdjustModal(row) {
+    ui["adj_lotId"].value = row.id;
+    ui["adj_lotNo"].value = row.lotNo || "";
+    ui["adj_balance"].value = row.balance;
+    ui["adj_exp"].value = toInputDate(row.exp);
+    ui["adj_note"].value = "";
+    openModal("adjust");
+  }
+
+  function openUserModal(row) {
+    ui["form-user"].reset();
+    if (row) {
+      ui["old_u_name"].value = row.username;
+      ui["u_name"].value = row.username;
+      ui["u_full_name"].value = row.fullName;
+      ui["u_dept"].value = row.department;
+      ui["u_role"].value = row.role;
+      ui["u_status"].value = row.status;
+    } else {
+      ui["old_u_name"].value = "";
+    }
+    openModal("user");
+  }
+
+  function openMasterModal(row) {
+    ui["form-master"].reset();
+    if (row) {
+      ui["old_m_name"].value = row.name;
+      ui["m_name"].value = row.name;
+      ui["m_min"].value = row.minStock;
+      ui["m_hazard"].value = row.hazard;
+      ui["m_location"].value = row.location;
+      ui["m_sds"].value = row.sds;
+      ui["m_supplier"].value = row.supplier;
+      ui["m_price"].value = row.price;
+    } else {
+      ui["old_m_name"].value = "";
+      ui["m_min"].value = 1;
+      ui["m_price"].value = 0;
+    }
+    openModal("master");
+  }
+
+  async function submitWithdraw(event) {
+    event.preventDefault();
+    setButtonLoading("btn-w-submit", true, "บันทึกเบิกสารเคมี");
+    try {
+      const response = await api("withdraw", {
+        name: ui["w_name"].value.trim(),
+        qty: ui["w_qty"].value,
+        note: [ui["w_note"].value.trim(), ui["w_lot_hint"].value.trim() ? "scan:" + ui["w_lot_hint"].value.trim() : ""].filter(Boolean).join(" | ")
+      });
+      closeModal("withdraw");
+      toast(response.message || "เบิกสารเคมีเรียบร้อย", "success");
+      ui["form-withdraw"].reset();
+      await refreshDashboard();
+    } catch (error) {
+      showApiError(error);
+    } finally {
+      setButtonLoading("btn-w-submit", false, "บันทึกเบิกสารเคมี");
+    }
+  }
+
+  async function submitReceive(event) {
+    event.preventDefault();
+    setButtonLoading("btn-r-submit", true, "บันทึกรับเข้าสต็อก");
+    try {
+      const response = await api("receive", {
+        chemicalName: ui["r_name"].value.trim(),
+        lotNo: ui["r_lot"].value.trim(),
+        qty: ui["r_qty"].value,
+        mfgDate: ui["r_mfg"].value,
+        expDate: ui["r_exp"].value,
+        note: ui["r_note"].value.trim()
+      });
+      closeModal("receive");
+      ui["form-receive"].reset();
+      toast(response.message || "รับเข้าสต็อกเรียบร้อย", "success");
+      await refreshDashboard();
+    } catch (error) {
+      showApiError(error);
+    } finally {
+      setButtonLoading("btn-r-submit", false, "บันทึกรับเข้าสต็อก");
+    }
+  }
+
+  async function submitDispose(event) {
+    event.preventDefault();
+    setButtonLoading("btn-d-submit", true, "ยืนยันการทำลาย");
+    try {
+      const response = await api("dispose", {
+        name: ui["d_name"].value.trim(),
+        qty: ui["d_qty"].value,
+        note: ui["d_note"].value.trim()
+      });
+      closeModal("dispose");
+      ui["form-dispose"].reset();
+      toast(response.message || "ทำลายสารเคมีเรียบร้อย", "success");
+      await refreshDashboard();
+    } catch (error) {
+      showApiError(error);
+    } finally {
+      setButtonLoading("btn-d-submit", false, "ยืนยันการทำลาย");
+    }
+  }
+
+  async function submitAdjust(event) {
+    event.preventDefault();
+    setButtonLoading("btn-adj-submit", true, "ยืนยันการแก้ไข");
+    try {
+      const response = await api("adjust-stock", {
+        lotId: ui["adj_lotId"].value,
+        newLotNo: ui["adj_lotNo"].value.trim(),
+        newExp: ui["adj_exp"].value,
+        newBalance: ui["adj_balance"].value,
+        note: ui["adj_note"].value.trim()
+      });
+      closeModal("adjust");
+      toast(response.message || "ปรับยอดเรียบร้อย", "success");
+      await refreshDashboard();
+      if (state.currentChemical) {
+        await showLotDetails(state.currentChemical);
+      }
+    } catch (error) {
+      showApiError(error);
+    } finally {
+      setButtonLoading("btn-adj-submit", false, "ยืนยันการแก้ไข");
+    }
+  }
+
+  async function submitUser(event) {
+    event.preventDefault();
+    setButtonLoading("btn-u-submit", true, "บันทึกข้อมูลผู้ใช้งาน");
+    try {
+      const password = ui["u_password"].value.trim();
+      const passwordHash = password ? await sha256Hex(password) : "";
+      const response = await api("update-user", {
+        oldUsername: ui["old_u_name"].value,
+        username: ui["u_name"].value.trim(),
+        fullName: ui["u_full_name"].value.trim(),
+        department: ui["u_dept"].value.trim(),
+        role: ui["u_role"].value,
+        status: ui["u_status"].value,
+        passwordHash: passwordHash
+      });
+      closeModal("user");
+      ui["form-user"].reset();
+      toast(response.message || "บันทึกผู้ใช้งานเรียบร้อย", "success");
+      await loadSettingsData();
+    } catch (error) {
+      showApiError(error);
+    } finally {
+      setButtonLoading("btn-u-submit", false, "บันทึกข้อมูลผู้ใช้งาน");
+    }
+  }
+
+  async function submitMaster(event) {
+    event.preventDefault();
+    try {
+      const response = await api("update-master", {
+        oldName: ui["old_m_name"].value,
+        name: ui["m_name"].value.trim(),
+        minStock: ui["m_min"].value,
+        hazard: ui["m_hazard"].value,
+        location: ui["m_location"].value.trim(),
+        sds: ui["m_sds"].value.trim(),
+        supplier: ui["m_supplier"].value.trim(),
+        price: ui["m_price"].value
+      });
+      closeModal("master");
+      ui["form-master"].reset();
+      toast(response.message || "บันทึกข้อมูลสารเคมีเรียบร้อย", "success");
+      await refreshDashboard();
+      await loadSettingsData();
+    } catch (error) {
+      showApiError(error);
+    }
+  }
+
+  async function deleteMasterItem(name) {
+    const result = await Swal.fire({
+      title: `Delete ${name}?`,
+      text: "This will remove the chemical from the master list.",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonColor: "#e11d48",
+      confirmButtonText: "Yes, Delete"
+    });
+    if (!result.isConfirmed) return;
+    try {
+      await api("delete-master", { name: name });
+      toast("ลบข้อมูลสารเคมีแล้ว", "success");
+      await loadSettingsData();
+      await refreshDashboard();
+    } catch (error) {
+      showApiError(error);
+    }
+  }
+
+  async function deleteUser(username) {
+    const result = await Swal.fire({
+      title: `Delete ${username}?`,
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonColor: "#e11d48",
+      confirmButtonText: "Yes, Delete"
+    });
+    if (!result.isConfirmed) return;
+    try {
+      await api("delete-user", { username: username });
+      toast("ลบผู้ใช้งานแล้ว", "success");
+      await loadSettingsData();
+    } catch (error) {
+      showApiError(error);
+    }
+  }
+
+  async function saveLineToken() {
+    try {
+      const response = await api("update-config", {
+        key: "LINE_TOKEN",
+        value: ui["sys-token"].value.trim()
+      });
+      toast(response.message || "บันทึก Line token แล้ว", "success");
+    } catch (error) {
+      showApiError(error);
+    }
+  }
+
+  async function exportCSV() {
+    try {
+      if (!state.logs.length) {
+        await loadHistory();
+      }
+      const rows = [["Timestamp", "Type", "Chemical Name", "Qty", "User", "Ref ID", "Note"]];
+      state.logs.slice().reverse().forEach(function (row) {
+        rows.push([formatDateTime(row.timestamp), row.type, row.name, row.qty, row.user, row.refId, row.note]);
+      });
+      downloadCsv(rows, "logs_export.csv");
+    } catch (error) {
+      showApiError(error);
+    }
+  }
+
+  async function downloadMonthlyReport() {
+    const value = ui["report-month"].value;
+    if (!value) {
+      toast("Please select month", "warning");
+      return;
+    }
+    const parts = value.split("-");
+    try {
+      const response = await api("monthly-summary", { year: parts[0], month: parts[1] });
+      downloadCsv(response.rows || [], `monthly_report_${value}.csv`);
+    } catch (error) {
+      showApiError(error);
+    }
+  }
+
+  function downloadCsv(rows, filename) {
+    const csv = "\uFEFF" + rows.map(function (row) {
+      return row.map(function (cell) {
+        return `"${String(cell == null ? "" : cell).replace(/"/g, '""')}"`;
+      }).join(",");
+    }).join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  }
+
+  async function requestCameraPermission() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      toast("Browser นี้ไม่รองรับการใช้งานกล้อง", "error");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+      stream.getTracks().forEach(function (track) { track.stop(); });
+      state.cameraPermission = "granted";
+      updateCameraStatusText("อนุญาตให้ใช้กล้องแล้ว พร้อมสแกน QR / Barcode");
+      toast("ได้รับสิทธิ์กล้องแล้ว", "success");
+      if (!ui["modal-withdraw"].classList.contains("hidden-force")) {
+        startScanner();
+      }
+    } catch (error) {
+      state.cameraPermission = "denied";
+      updateCameraStatusText("ระบบยังไม่ได้สิทธิ์กล้อง ถ้ากดบล็อกถาวรต้องเปิดสิทธิ์จาก browser settings");
+      toast("ไม่ได้รับสิทธิ์กล้อง", "warning");
+    }
+  }
+
+  async function refreshCameraStatus() {
+    if (!navigator.permissions || !navigator.permissions.query) {
+      updateCameraStatusText("Browser นี้ไม่รองรับการอ่านสถานะ permission โดยตรง แต่ยังสามารถลองกดขอสิทธิ์กล้องได้");
+      return;
+    }
+
+    try {
+      const permission = await navigator.permissions.query({ name: "camera" });
+      state.cameraPermission = permission.state;
+      permission.onchange = function () {
+        state.cameraPermission = permission.state;
+        refreshCameraStatus();
+      };
+      if (permission.state === "granted") {
+        updateCameraStatusText("กล้องพร้อมใช้งาน");
+      } else if (permission.state === "prompt") {
+        updateCameraStatusText("ยังไม่เคยอนุญาตกล้อง กดปุ่มขอสิทธิ์เพื่อให้ระบบถามทันที");
+      } else {
+        updateCameraStatusText("กล้องถูกปฏิเสธการใช้งาน ต้องกดอนุญาตใหม่จาก browser/site settings");
+      }
+    } catch (error) {
+      updateCameraStatusText("ไม่สามารถตรวจสอบสถานะกล้องอัตโนมัติได้ แต่ยังสามารถลองกดขอสิทธิ์ได้");
+    }
+  }
+
+  function updateCameraStatusText(message) {
+    ui["camera-status-text"].textContent = message;
+  }
+
+  function openModal(type) {
+    const modal = ui[`modal-${type}`];
+    if (!modal) return;
+    modal.classList.remove("hidden-force");
+    if (type === "withdraw") {
+      prepareWithdrawModal();
+    }
+  }
+
+  function closeModal(type) {
+    const modal = ui[`modal-${type}`];
+    if (!modal) return;
+    modal.classList.add("hidden-force");
+    if (type === "withdraw") {
+      stopScanner();
+      ui["reader"].innerHTML = "";
+    }
+  }
+
+  async function prepareWithdrawModal() {
+    ui["reader"].innerHTML = "";
+    if (state.cameraPermission === "denied") {
+      updateCameraStatusText("กล้องถูกปฏิเสธอยู่ ลองกดขอสิทธิ์อีกครั้งจากหน้า Settings");
+      return;
+    }
+    if (state.cameraPermission !== "granted") {
+      await requestCameraPermission();
+    } else {
+      startScanner();
+    }
+  }
+
+  function getSupportedFormats() {
+    if (!window.Html5QrcodeSupportedFormats) return [];
+    return [
+      Html5QrcodeSupportedFormats.QR_CODE,
+      Html5QrcodeSupportedFormats.CODE_128,
+      Html5QrcodeSupportedFormats.CODE_39,
+      Html5QrcodeSupportedFormats.EAN_13,
+      Html5QrcodeSupportedFormats.UPC_A,
+      Html5QrcodeSupportedFormats.UPC_E
+    ];
+  }
+
+  function startScanner() {
+    if (!window.Html5Qrcode) return;
+    stopScanner();
+    state.scanner = new Html5Qrcode("reader");
+    state.scanFormats = getSupportedFormats();
+
+    state.scanner.start(
+      { facingMode: "environment" },
+      {
+        fps: 10,
+        qrbox: 240,
+        formatsToSupport: state.scanFormats.length ? state.scanFormats : undefined
+      },
+      function (decodedText) {
+        ui["w_scan"].value = decodedText;
+        resolveScannedCode();
+      },
+      function () {}
+    ).catch(function () {
+      updateCameraStatusText("เปิดกล้องไม่สำเร็จ ลองกดขอสิทธิ์กล้องใหม่จากหน้า Settings");
+    });
+  }
+
+  function stopScanner() {
+    if (!state.scanner) return;
+    state.scanner.stop().then(function () {
+      if (state.scanner) {
+        state.scanner.clear();
+      }
+      state.scanner = null;
+    }).catch(function () {
+      state.scanner = null;
+    });
+  }
+
+  async function resolveScannedCode() {
+    const code = ui["w_scan"].value.trim();
+    if (!code) {
+      toast("ยังไม่มีค่าที่สแกนได้", "warning");
+      return;
+    }
+    try {
+      const response = await api("resolve-scan", { code: code });
+      if (response.found) {
+        ui["w_name"].value = response.chemicalName || "";
+        ui["w_lot_hint"].value = response.lotId || response.lotNo || "";
+        toast("พบข้อมูลจาก QR / Barcode แล้ว", "success");
+      } else {
+        toast(response.message || "ไม่พบข้อมูลจากรหัสที่สแกน", "warning");
+      }
+    } catch (error) {
+      showApiError(error);
+    }
+  }
+
+  async function api(action, params, options) {
+    params = params || {};
+    options = options || {};
+    const requiresAuth = options.requiresAuth !== false;
+    if (!state.apiBaseUrl) {
+      throw new Error("ยังไม่ได้ตั้งค่า Apps Script API URL");
+    }
+
+    const query = Object.assign({}, params, { action: action });
+    if (requiresAuth) {
+      if (!state.token) throw new Error("ยังไม่ได้เข้าสู่ระบบ");
+      query.token = state.token;
+    }
+
+    const response = await jsonpRequest(state.apiBaseUrl, query);
+    if (!response || response.success === false) {
+      throw new Error(response && response.message ? response.message : "API request failed");
+    }
+    setApiStatus("API พร้อมใช้งาน", "ok");
+    return response;
+  }
+
+  function jsonpRequest(baseUrl, params) {
+    return new Promise(function (resolve, reject) {
+      const callbackName = `chemJsonp_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+      const cleanup = function () {
+        if (script.parentNode) {
+          script.parentNode.removeChild(script);
+        }
+        delete window[callbackName];
+        clearTimeout(timeoutId);
+      };
+
+      const searchParams = new URLSearchParams();
+      Object.keys(params).forEach(function (key) {
+        if (params[key] !== undefined && params[key] !== null) {
+          searchParams.append(key, params[key]);
+        }
+      });
+      searchParams.append("callback", callbackName);
+
+      const separator = baseUrl.indexOf("?") === -1 ? "?" : "&";
+      const script = document.createElement("script");
+      script.src = baseUrl + separator + searchParams.toString();
+      script.async = true;
+
+      const timeoutId = window.setTimeout(function () {
+        cleanup();
+        reject(new Error("เชื่อมต่อ Apps Script timeout"));
+      }, 20000);
+
+      window[callbackName] = function (payload) {
+        cleanup();
+        resolve(payload);
+      };
+
+      script.onerror = function () {
+        cleanup();
+        reject(new Error("โหลดข้อมูลจาก Apps Script ไม่สำเร็จ"));
+      };
+
+      document.body.appendChild(script);
+    });
+  }
+
+  async function sha256Hex(text) {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(text);
+    const hash = await crypto.subtle.digest("SHA-256", data);
+    return Array.from(new Uint8Array(hash)).map(function (byte) {
+      return byte.toString(16).padStart(2, "0");
+    }).join("");
+  }
+
+  function setApiStatus(text, type) {
+    ui["api-status-pill"].textContent = text;
+    ui["api-status-pill"].className = "status-pill " + (type === "ok" ? "status-ok" : (type === "danger" ? "status-danger" : "status-warn"));
+  }
+
+  function setButtonLoading(id, isLoading, defaultText) {
+    const button = ui[id];
+    if (!button) return;
+    if (isLoading) {
+      button.disabled = true;
+      button.innerHTML = `<span class="inline-block animate-spin mr-2">⏳</span>กำลังประมวลผล...`;
+      button.classList.add("opacity-75", "cursor-not-allowed");
+    } else {
+      button.disabled = false;
+      button.innerHTML = defaultText;
+      button.classList.remove("opacity-75", "cursor-not-allowed");
+    }
+  }
+
+  function showApiError(error) {
+    console.error(error);
+    setApiStatus("API มีปัญหา", "danger");
+    Swal.fire({
+      icon: "error",
+      title: "เกิดข้อผิดพลาด",
+      text: error.message || "Unknown error"
+    });
+  }
+
+  function toast(text, icon) {
+    Swal.fire({
+      toast: true,
+      position: "top-end",
+      showConfirmButton: false,
+      timer: 2200,
+      icon: icon || "success",
+      title: text
+    });
+  }
+
+  function getHazardIcon(hazard) {
+    const text = String(hazard || "").toLowerCase();
+    if (text.includes("flame")) return "🔥";
+    if (text.includes("acid")) return "🧪";
+    if (text.includes("bio")) return "🧬";
+    if (text.includes("toxic")) return "☠️";
+    return "🛡️";
+  }
+
+  function getChemicalClass(name) {
+    const lower = String(name || "").toLowerCase();
+    if (lower.includes("7.00")) return "chem-7-00";
+    if (lower.includes("4.01")) return "chem-4-01";
+    if (lower.includes("9.21")) return "chem-9-21";
+    return "chem-gen";
+  }
+
+  function formatDate(value) {
+    if (!value) return "-";
+    return new Date(value).toLocaleDateString("th-TH");
+  }
+
+  function formatDateTime(value) {
+    if (!value) return "-";
+    return new Date(value).toLocaleString("th-TH");
+  }
+
+  function toInputDate(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  }
+
+  function escapeHtml(value) {
+    return String(value == null ? "" : value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function loadJson(key) {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  window.ChemInventoryApp = {
+    init: init
+  };
+
+  init();
+})();
