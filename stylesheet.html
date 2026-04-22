@@ -366,6 +366,142 @@ body {
   border: 1px dashed rgba(148, 163, 184, 0.8);
 }
 
+.scanner-frame-shell {
+  position: relative;
+  width: 100%;
+}
+
+.scanner-guide {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.scanner-guide-qr .scanner-guide-qr-box {
+  display: block;
+}
+
+.scanner-guide-qr .scanner-guide-barcode-box {
+  display: none;
+}
+
+.scanner-guide-barcode .scanner-guide-qr-box {
+  display: none;
+}
+
+.scanner-guide-barcode .scanner-guide-barcode-box {
+  display: block;
+}
+
+.scanner-guide-qr-box {
+  position: relative;
+  width: min(62vw, 240px);
+  aspect-ratio: 1 / 1;
+  max-width: 72%;
+  max-height: 72%;
+  --scan-travel: calc(100% - 28px);
+}
+
+.scanner-corner {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  border-color: rgba(255, 255, 255, 0.95);
+  border-style: solid;
+  filter: drop-shadow(0 0 6px rgba(37, 99, 235, 0.35));
+}
+
+.scanner-corner-tl {
+  top: 0;
+  left: 0;
+  border-width: 4px 0 0 4px;
+  border-top-left-radius: 14px;
+}
+
+.scanner-corner-tr {
+  top: 0;
+  right: 0;
+  border-width: 4px 4px 0 0;
+  border-top-right-radius: 14px;
+}
+
+.scanner-corner-bl {
+  bottom: 0;
+  left: 0;
+  border-width: 0 0 4px 4px;
+  border-bottom-left-radius: 14px;
+}
+
+.scanner-corner-br {
+  right: 0;
+  bottom: 0;
+  border-width: 0 4px 4px 0;
+  border-bottom-right-radius: 14px;
+}
+
+.scanner-guide-barcode-box {
+  position: relative;
+  width: min(82%, 320px);
+  height: 128px;
+  --scan-travel: 72px;
+}
+
+.scanner-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 4px solid rgba(255, 255, 255, 0.95);
+  filter: drop-shadow(0 0 8px rgba(16, 185, 129, 0.32));
+}
+
+.scanner-bar-top {
+  top: 18px;
+}
+
+.scanner-bar-bottom {
+  bottom: 18px;
+}
+
+.scanner-scan-line {
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(255,255,255,0), rgba(59,130,246,0.95), rgba(255,255,255,0));
+  box-shadow: 0 0 14px rgba(59, 130, 246, 0.55);
+  animation: scannerSweep 2.2s linear infinite;
+  opacity: 0.9;
+}
+
+.scanner-scan-line-qr {
+  top: 12%;
+}
+
+.scanner-scan-line-barcode {
+  top: 28px;
+  background: linear-gradient(90deg, rgba(255,255,255,0), rgba(16,185,129,0.95), rgba(255,255,255,0));
+  box-shadow: 0 0 14px rgba(16, 185, 129, 0.48);
+}
+
+@keyframes scannerSweep {
+  0% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(var(--scan-travel, 120px));
+  }
+
+  100% {
+    transform: translateY(0);
+  }
+}
+
 .scanner-mode-btn {
   border: 1px solid rgba(203, 213, 225, 1);
   background: #ffffff;
