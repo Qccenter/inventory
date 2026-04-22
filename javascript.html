@@ -19,7 +19,9 @@
     chart: null,
     scanner: null,
     cameraPermission: "unknown",
-    scanFormats: []
+    scanFormats: [],
+    scannerMode: "qr",
+    scannerBusy: false
   };
 
   const ui = {};
@@ -51,7 +53,7 @@
       "btn-test-api", "btn-request-camera", "btn-check-camera", "btn-open-master-modal",
       "btn-open-user-modal", "btn-save-token", "btn-export-csv", "btn-monthly-report", "quick-withdraw",
       "quick-receive", "quick-dispose", "btn-receive-current-chem", "reader", "w_scan", "w_name", "w_qty",
-      "w_lot_hint", "w_note", "btn-resolve-scan", "r_name", "r_lot", "r_qty", "r_mfg", "r_exp", "r_note",
+      "w_lot_hint", "w_note", "btn-resolve-scan", "btn-scan-barcode", "btn-scan-qr", "scanner-status", "r_name", "r_lot", "r_qty", "r_mfg", "r_exp", "r_note",
       "d_name", "d_qty", "d_note", "adj_lotId", "adj_lotNo", "adj_exp", "adj_balance", "adj_note",
       "old_u_name", "u_name", "u_full_name", "u_dept", "u_password", "u_role", "u_status", "old_m_name",
       "m_name", "m_min", "m_hazard", "m_location", "m_sds", "m_supplier", "m_price", "details-title",
@@ -86,6 +88,8 @@
     ui["quick-dispose"].addEventListener("click", function () { openModal("dispose"); });
     ui["btn-receive-current-chem"].addEventListener("click", openReceiveForCurrentChem);
     ui["btn-resolve-scan"].addEventListener("click", resolveScannedCode);
+    ui["btn-scan-barcode"].addEventListener("click", function () { setScannerMode("barcode"); });
+    ui["btn-scan-qr"].addEventListener("click", function () { setScannerMode("qr"); });
     ui["form-withdraw"].addEventListener("submit", submitWithdraw);
     ui["form-receive"].addEventListener("submit", submitReceive);
     ui["form-dispose"].addEventListener("submit", submitDispose);
@@ -1063,6 +1067,7 @@
       stream.getTracks().forEach(function (track) { track.stop(); });
       state.cameraPermission = "granted";
       updateCameraStatusText("อนุญาตให้ใช้กล้องแล้ว พร้อมสแกน QR / Barcode");
+      setScannerStatus("พร้อมสแกนแล้ว");
       toast("ได้รับสิทธิ์กล้องแล้ว", "success");
       if (!ui["modal-withdraw"].classList.contains("hidden-force")) {
         startScanner();
@@ -1119,13 +1124,17 @@
     if (type === "withdraw") {
       stopScanner();
       ui["reader"].innerHTML = "";
+      setScannerStatus("ปิดตัวสแกนแล้ว");
     }
   }
 
   async function prepareWithdrawModal() {
     ui["reader"].innerHTML = "";
+    syncScannerModeButtons();
+    setScannerStatus(state.scannerMode === "qr" ? "กำลังเตรียมโหมด QR Code..." : "กำลังเตรียมโหมด Barcode...");
     if (state.cameraPermission === "denied") {
       updateCameraStatusText("กล้องถูกปฏิเสธอยู่ ลองกดขอสิทธิ์อีกครั้งจากหน้า Settings");
+      setScannerStatus("ยังไม่ได้รับสิทธิ์กล้อง");
       return;
     }
     if (state.cameraPermission !== "granted") {
@@ -1135,10 +1144,14 @@
     }
   }
 
-  function getSupportedFormats() {
+  function getSupportedFormats(mode) {
     if (!window.Html5QrcodeSupportedFormats) return [];
+    if (mode === "qr") {
+      return [
+        Html5QrcodeSupportedFormats.QR_CODE
+      ];
+    }
     return [
-      Html5QrcodeSupportedFormats.QR_CODE,
       Html5QrcodeSupportedFormats.CODE_128,
       Html5QrcodeSupportedFormats.CODE_39,
       Html5QrcodeSupportedFormats.EAN_13,
@@ -1147,32 +1160,76 @@
     ];
   }
 
-  function startScanner() {
+  function setScannerMode(mode) {
+    state.scannerMode = mode === "qr" ? "qr" : "barcode";
+    syncScannerModeButtons();
+    setScannerStatus(state.scannerMode === "qr"
+      ? "สลับเป็นโหมด QR Code แล้ว จัด QR ให้อยู่กลางกรอบสี่เหลี่ยม"
+      : "สลับเป็นโหมด Barcode แล้ว จัดบาร์โค้ดแนวนอนให้อยู่ในกรอบผืนผ้า");
+    if (!ui["modal-withdraw"].classList.contains("hidden-force") && state.cameraPermission === "granted") {
+      startScanner();
+    }
+  }
+
+  function syncScannerModeButtons() {
+    if (ui["btn-scan-barcode"]) {
+      ui["btn-scan-barcode"].classList.toggle("active", state.scannerMode === "barcode");
+    }
+    if (ui["btn-scan-qr"]) {
+      ui["btn-scan-qr"].classList.toggle("active", state.scannerMode === "qr");
+    }
+  }
+
+  function getScannerBox() {
+    if (state.scannerMode === "qr") {
+      return { width: 250, height: 250 };
+    }
+    return { width: 320, height: 140 };
+  }
+
+  function setScannerStatus(message) {
+    if (ui["scanner-status"]) {
+      ui["scanner-status"].textContent = message;
+    }
+  }
+
+  async function startScanner() {
     if (!window.Html5Qrcode) return;
-    stopScanner();
+    await stopScanner();
     state.scanner = new Html5Qrcode("reader");
-    state.scanFormats = getSupportedFormats();
+    state.scanFormats = getSupportedFormats(state.scannerMode);
+    state.scannerBusy = false;
+    setScannerStatus(state.scannerMode === "qr"
+      ? "กำลังอ่าน QR Code... จัดให้อยู่กลางกรอบสี่เหลี่ยม"
+      : "กำลังอ่าน Barcode... จัดบาร์โค้ดแนวนอนให้อยู่ในกรอบผืนผ้า");
 
     state.scanner.start(
       { facingMode: "environment" },
       {
-        fps: 10,
-        qrbox: 240,
+        fps: state.scannerMode === "qr" ? 10 : 16,
+        qrbox: getScannerBox(),
+        aspectRatio: state.scannerMode === "qr" ? 1 : 1.777778,
         formatsToSupport: state.scanFormats.length ? state.scanFormats : undefined
       },
       function (decodedText) {
+        if (state.scannerBusy) return;
+        state.scannerBusy = true;
         ui["w_scan"].value = decodedText;
+        setScannerStatus("อ่านสำเร็จ กำลังค้นหาข้อมูล...");
         resolveScannedCode();
       },
       function () {}
     ).catch(function () {
+      state.scannerBusy = false;
+      setScannerStatus("เปิดกล้องไม่สำเร็จ ลองขอสิทธิ์กล้องใหม่จากหน้า Settings");
       updateCameraStatusText("เปิดกล้องไม่สำเร็จ ลองกดขอสิทธิ์กล้องใหม่จากหน้า Settings");
     });
   }
 
   function stopScanner() {
-    if (!state.scanner) return;
-    state.scanner.stop().then(function () {
+    state.scannerBusy = false;
+    if (!state.scanner) return Promise.resolve();
+    return state.scanner.stop().then(function () {
       if (state.scanner) {
         state.scanner.clear();
       }
@@ -1185,6 +1242,7 @@
   async function resolveScannedCode() {
     const code = ui["w_scan"].value.trim();
     if (!code) {
+      state.scannerBusy = false;
       toast("ยังไม่มีค่าที่สแกนได้", "warning");
       return;
     }
@@ -1193,11 +1251,17 @@
       if (response.found) {
         ui["w_name"].value = response.chemicalName || "";
         ui["w_lot_hint"].value = response.lotId || response.lotNo || "";
+        setScannerStatus("พบข้อมูลแล้ว พร้อมบันทึกการเบิกหรือสแกนรายการถัดไป");
+        state.scannerBusy = false;
         toast("พบข้อมูลจาก QR / Barcode แล้ว", "success");
       } else {
+        setScannerStatus("อ่านได้แล้วแต่ยังไม่พบข้อมูลในระบบ ลองสแกนใหม่หรือค้นหาด้วยมือ");
+        state.scannerBusy = false;
         toast(response.message || "ไม่พบข้อมูลจากรหัสที่สแกน", "warning");
       }
     } catch (error) {
+      state.scannerBusy = false;
+      setScannerStatus("อ่านรหัสได้ แต่ค้นหาข้อมูลไม่สำเร็จ");
       showApiError(error);
     }
   }
