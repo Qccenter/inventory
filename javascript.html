@@ -1,8 +1,9 @@
 (function () {
   const APP_CONFIG = {
     // ใส่ URL ของ Apps Script Web App ตรงนี้
-    apiBaseUrl: "https://script.google.com/macros/s/AKfycbwhR7Pj0J39jUb1XfC2ZULcTFv_MJdjlGCIcoHQupwiTRrzzWpRMxRgQf8lyMM5JGQhfg/exec"
+    apiBaseUrl: "PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE"
   };
+  const CACHE_PREFIX = "chem_cache_v1";
 
   const state = {
     apiBaseUrl: String(APP_CONFIG.apiBaseUrl || "").trim().replace(/\?$/, ""),
@@ -28,6 +29,7 @@
     bindEvents();
     hydrateSavedSettings();
     setDefaultMonth();
+    enableBootControls();
     refreshCameraStatus();
     if (state.token && state.apiBaseUrl) {
       restoreSession();
@@ -103,6 +105,14 @@
     });
   }
 
+  function enableBootControls() {
+    ["btn-login", "btn-register"].forEach(function (id) {
+      if (!ui[id]) return;
+      ui[id].disabled = false;
+      ui[id].classList.remove("opacity-60", "cursor-not-allowed");
+    });
+  }
+
   function hydrateSavedSettings() {
     if (ui["settings-api-url-text"]) {
       ui["settings-api-url-text"].textContent = state.apiBaseUrl || "ยังไม่ได้ตั้งค่าใน javascript.html";
@@ -123,9 +133,18 @@
       updateUserHeader();
       await refreshCurrentView();
     } catch (error) {
-      clearSession();
-      showLoginShell();
-      toast("Session หมดอายุ กรุณาเข้าสู่ระบบใหม่", "warning");
+      const hasCachedDashboard = !!loadCache("dashboard_items");
+      if (state.user && hasCachedDashboard) {
+        showAppShell();
+        updateUserHeader();
+        await refreshCurrentView();
+        setApiStatus("โหมดอ่านข้อมูลจากแคช", "warn");
+        toast("ออนไลน์มีปัญหา กำลังใช้ข้อมูลล่าสุดจากแคช", "warning");
+      } else {
+        clearSession();
+        showLoginShell();
+        toast("Session หมดอายุ กรุณาเข้าสู่ระบบใหม่", "warning");
+      }
     }
   }
 
@@ -268,6 +287,8 @@
       const [dashboardResponse, expiringResponse] = await Promise.all([dashboardPromise, expiringPromise]);
       state.dashboard = dashboardResponse.items || [];
       state.expiringRows = expiringResponse.items || [];
+      saveCache("dashboard_items", state.dashboard);
+      saveCache("expiring_items", state.expiringRows);
       renderDashboard();
       renderExpiringSoon();
       if (state.currentTab === "history") {
@@ -280,7 +301,27 @@
         await fetchAnalytics();
       }
     } catch (error) {
-      showApiError(error);
+      const cachedDashboard = loadCache("dashboard_items");
+      const cachedExpiring = loadCache("expiring_items");
+      if (cachedDashboard || cachedExpiring) {
+        state.dashboard = cachedDashboard || [];
+        state.expiringRows = cachedExpiring || [];
+        renderDashboard();
+        renderExpiringSoon();
+        setApiStatus("แสดงข้อมูลจากแคชในเครื่อง", "warn");
+        toast("ออนไลน์มีปัญหา กำลังใช้ข้อมูลล่าสุดจากแคช", "warning");
+        if (state.currentTab === "history") {
+          await loadHistory();
+        }
+        if (state.currentTab === "settings") {
+          await loadSettingsData();
+        }
+        if (state.currentTab === "analytics") {
+          await fetchAnalytics();
+        }
+      } else {
+        showApiError(error);
+      }
     } finally {
       ui["dashboard-loading"].classList.add("hidden-force");
       ui["dashboard-container"].classList.remove("hidden-force");
@@ -419,9 +460,17 @@
     try {
       const response = await api("logs");
       state.logs = (response.rows || []).slice().reverse();
+      saveCache("history_logs", state.logs);
       renderHistory();
     } catch (error) {
-      showApiError(error);
+      const cachedLogs = loadCache("history_logs");
+      if (cachedLogs) {
+        state.logs = cachedLogs;
+        renderHistory();
+        setApiStatus("แสดงประวัติจากแคชในเครื่อง", "warn");
+      } else {
+        showApiError(error);
+      }
     }
   }
 
@@ -484,10 +533,25 @@
       state.masterRows = masterResponse.rows || [];
       state.userRows = userResponse.rows || [];
       ui["sys-token"].value = (configResponse.config || {}).LINE_TOKEN || "";
+      saveCache("master_rows", state.masterRows);
+      saveCache("user_rows", state.userRows);
+      saveCache("system_config", configResponse.config || {});
       renderMasterList();
       renderUserList();
     } catch (error) {
-      showApiError(error);
+      const cachedMasterRows = loadCache("master_rows");
+      const cachedUserRows = loadCache("user_rows");
+      const cachedConfig = loadCache("system_config");
+      if (cachedMasterRows || cachedUserRows || cachedConfig) {
+        state.masterRows = cachedMasterRows || [];
+        state.userRows = cachedUserRows || [];
+        ui["sys-token"].value = cachedConfig && cachedConfig.LINE_TOKEN ? cachedConfig.LINE_TOKEN : "";
+        renderMasterList();
+        renderUserList();
+        setApiStatus("แสดง settings จากแคชในเครื่อง", "warn");
+      } else {
+        showApiError(error);
+      }
     }
   }
 
@@ -589,6 +653,7 @@
   async function fetchAnalytics() {
     try {
       const response = await api("analytics");
+      saveCache("analytics_stats", response);
       ui["stat-in"].textContent = response.IN || 0;
       ui["stat-out"].textContent = response.OUT || 0;
       ui["stat-value"].textContent = "฿" + state.dashboard.reduce(function (sum, item) {
@@ -597,7 +662,19 @@
       updateExpiryForecast();
       renderAnalyticsChart(response.monthly || {});
     } catch (error) {
-      showApiError(error);
+      const cachedAnalytics = loadCache("analytics_stats");
+      if (cachedAnalytics) {
+        ui["stat-in"].textContent = cachedAnalytics.IN || 0;
+        ui["stat-out"].textContent = cachedAnalytics.OUT || 0;
+        ui["stat-value"].textContent = "฿" + state.dashboard.reduce(function (sum, item) {
+          return sum + Number(item.price || 0) * Number(item.stats.available || 0);
+        }, 0).toLocaleString();
+        updateExpiryForecast();
+        renderAnalyticsChart(cachedAnalytics.monthly || {});
+        setApiStatus("แสดง analytics จากแคชในเครื่อง", "warn");
+      } else {
+        showApiError(error);
+      }
     }
   }
 
@@ -1278,6 +1355,31 @@
     } catch (error) {
       return null;
     }
+  }
+
+  function saveCache(key, data) {
+    try {
+      localStorage.setItem(getCacheKey(key), JSON.stringify({
+        savedAt: Date.now(),
+        data: data
+      }));
+    } catch (error) {}
+  }
+
+  function loadCache(key) {
+    try {
+      const raw = localStorage.getItem(getCacheKey(key));
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed ? parsed.data : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function getCacheKey(key) {
+    const scope = state.user && state.user.username ? state.user.username : "guest";
+    return `${CACHE_PREFIX}:${scope}:${key}`;
   }
 
   window.ChemInventoryApp = {
