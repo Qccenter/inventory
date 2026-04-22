@@ -63,8 +63,8 @@
       "stat-in", "stat-out", "stat-value", "stat-expiry", "usageChart", "admin-master-search", "admin-user-search",
       "btn-test-api", "btn-request-camera", "btn-check-camera", "btn-open-master-modal",
       "btn-open-user-modal", "btn-save-token", "btn-export-csv", "btn-monthly-report", "quick-withdraw",
-      "quick-receive", "quick-dispose", "btn-receive-current-chem", "reader", "scanner-guide", "w_scan", "w_name", "w_qty",
-      "w_lot_hint", "w_note", "btn-resolve-scan", "btn-scan-barcode", "btn-scan-qr", "scanner-status", "r_name", "r_lot", "r_qty", "r_mfg", "r_exp", "r_note",
+      "quick-receive", "quick-dispose", "btn-receive-current-chem", "reader", "scanner-guide", "withdraw-scanner-screen", "btn-close-scanner-screen", "btn-open-scanner-screen",
+      "w_scan", "w_name", "w_qty", "w_lot_hint", "w_note", "btn-resolve-scan", "btn-scan-barcode", "btn-scan-qr", "scanner-status", "r_name", "r_lot", "r_qty", "r_mfg", "r_exp", "r_note",
       "d_name", "d_qty", "d_note", "adj_lotId", "adj_lotNo", "adj_exp", "adj_balance", "adj_note",
       "old_u_name", "u_name", "u_full_name", "u_dept", "u_password", "u_role", "u_status", "old_m_name",
       "m_name", "m_min", "m_hazard", "m_location", "m_sds", "m_supplier", "m_price", "details-title",
@@ -101,6 +101,8 @@
     ui["btn-resolve-scan"].addEventListener("click", resolveScannedCode);
     ui["btn-scan-barcode"].addEventListener("click", function () { setScannerMode("barcode"); });
     ui["btn-scan-qr"].addEventListener("click", function () { setScannerMode("qr"); });
+    ui["btn-open-scanner-screen"].addEventListener("click", openWithdrawScannerScreen);
+    ui["btn-close-scanner-screen"].addEventListener("click", function () { closeWithdrawScannerScreen(); });
     ui["form-withdraw"].addEventListener("submit", submitWithdraw);
     ui["form-receive"].addEventListener("submit", submitReceive);
     ui["form-dispose"].addEventListener("submit", submitDispose);
@@ -1141,7 +1143,7 @@
       updateCameraStatusText("อนุญาตให้ใช้กล้องแล้ว พร้อมสแกน QR / Barcode");
       setScannerStatus("พร้อมสแกนแล้ว");
       toast("ได้รับสิทธิ์กล้องแล้ว", "success");
-      if (!ui["modal-withdraw"].classList.contains("hidden-force")) {
+      if (isWithdrawScannerScreenOpen()) {
         startScanner();
       }
     } catch (error) {
@@ -1180,6 +1182,47 @@
     ui["camera-status-text"].textContent = message;
   }
 
+  function isWithdrawScannerScreenOpen() {
+    return !!ui["withdraw-scanner-screen"] && !ui["withdraw-scanner-screen"].classList.contains("hidden-force");
+  }
+
+  async function openWithdrawScannerScreen() {
+    if (!ui["withdraw-scanner-screen"]) return;
+    ui["withdraw-scanner-screen"].classList.remove("hidden-force");
+    document.body.classList.add("scanner-screen-open");
+    forceScannerGuideState();
+    setScannerStatus(state.scannerMode === "qr"
+      ? "กำลังเตรียมโหมด QR Code..."
+      : "กำลังเตรียมโหมด Barcode...");
+    if (state.cameraPermission === "denied") {
+      updateCameraStatusText("กล้องถูกปฏิเสธอยู่ ลองกดขอสิทธิ์อีกครั้งจากหน้า Settings");
+      setScannerStatus("ยังไม่ได้รับสิทธิ์กล้อง");
+      return;
+    }
+    if (state.cameraPermission !== "granted") {
+      await requestCameraPermission();
+      return;
+    }
+    window.setTimeout(function () {
+      if (isWithdrawScannerScreenOpen()) {
+        startScanner();
+      }
+    }, 80);
+  }
+
+  function closeWithdrawScannerScreen(statusMessage) {
+    if (!ui["withdraw-scanner-screen"]) return;
+    ui["withdraw-scanner-screen"].classList.add("hidden-force");
+    document.body.classList.remove("scanner-screen-open");
+    stopScanner();
+    if (ui["reader"]) {
+      ui["reader"].innerHTML = "";
+    }
+    if (statusMessage) {
+      setScannerStatus(statusMessage);
+    }
+  }
+
   function openModal(type) {
     const modal = ui[`modal-${type}`];
     if (!modal) return;
@@ -1194,26 +1237,15 @@
     if (!modal) return;
     modal.classList.add("hidden-force");
     if (type === "withdraw") {
-      stopScanner();
-      ui["reader"].innerHTML = "";
+      closeWithdrawScannerScreen("ปิดหน้าสแกนแล้ว");
       setScannerStatus("ปิดตัวสแกนแล้ว");
     }
   }
 
   async function prepareWithdrawModal() {
     ui["reader"].innerHTML = "";
-    syncScannerModeButtons();
-    setScannerStatus(state.scannerMode === "qr" ? "กำลังเตรียมโหมด QR Code..." : "กำลังเตรียมโหมด Barcode...");
-    if (state.cameraPermission === "denied") {
-      updateCameraStatusText("กล้องถูกปฏิเสธอยู่ ลองกดขอสิทธิ์อีกครั้งจากหน้า Settings");
-      setScannerStatus("ยังไม่ได้รับสิทธิ์กล้อง");
-      return;
-    }
-    if (state.cameraPermission !== "granted") {
-      await requestCameraPermission();
-    } else {
-      startScanner();
-    }
+    forceScannerGuideState();
+    await openWithdrawScannerScreen();
   }
 
   function getSupportedFormats(mode) {
@@ -1234,11 +1266,11 @@
 
   function setScannerMode(mode) {
     state.scannerMode = mode === "qr" ? "qr" : "barcode";
-    syncScannerModeButtons();
+    forceScannerGuideState();
     setScannerStatus(state.scannerMode === "qr"
       ? "สลับเป็นโหมด QR Code แล้ว จัด QR ให้อยู่กลางกรอบสี่เหลี่ยม"
       : "สลับเป็นโหมด Barcode แล้ว จัดบาร์โค้ดแนวนอนให้อยู่ในกรอบผืนผ้า");
-    if (!ui["modal-withdraw"].classList.contains("hidden-force") && state.cameraPermission === "granted") {
+    if (isWithdrawScannerScreenOpen() && state.cameraPermission === "granted") {
       startScanner();
     }
   }
@@ -1250,17 +1282,37 @@
     if (ui["btn-scan-qr"]) {
       ui["btn-scan-qr"].classList.toggle("active", state.scannerMode === "qr");
     }
+  }
+
+  function forceScannerGuideState() {
+    syncScannerModeButtons();
     if (ui["scanner-guide"]) {
-      ui["scanner-guide"].classList.toggle("scanner-guide-qr", state.scannerMode === "qr");
-      ui["scanner-guide"].classList.toggle("scanner-guide-barcode", state.scannerMode === "barcode");
+      ui["scanner-guide"].className = state.scannerMode === "qr"
+        ? "scanner-guide scanner-guide-qr"
+        : "scanner-guide scanner-guide-barcode";
     }
   }
 
   function getScannerBox() {
+    const readerWidth = ui["reader"] ? ui["reader"].clientWidth : 0;
+    const readerHeight = ui["reader"] ? ui["reader"].clientHeight : 0;
+
     if (state.scannerMode === "qr") {
-      return { width: 250, height: 250 };
+      const qrSize = Math.max(190, Math.min(readerWidth || 320, readerHeight || 320) * 0.62);
+      return { width: Math.round(qrSize), height: Math.round(qrSize) };
     }
-    return { width: 320, height: 140 };
+    const barcodeWidth = Math.max(280, Math.min((readerWidth || 420) * 0.82, 420));
+    const barcodeHeight = Math.max(120, Math.min((readerHeight || 240) * 0.26, 160));
+    return { width: Math.round(barcodeWidth), height: Math.round(barcodeHeight) };
+  }
+
+  function getScannerAspectRatio() {
+    const readerWidth = ui["reader"] ? ui["reader"].clientWidth : 0;
+    const readerHeight = ui["reader"] ? ui["reader"].clientHeight : 0;
+    if (readerWidth > 0 && readerHeight > 0) {
+      return readerWidth / readerHeight;
+    }
+    return state.scannerMode === "qr" ? 1 : 1.777778;
   }
 
   function setScannerStatus(message) {
@@ -1284,7 +1336,7 @@
       {
         fps: state.scannerMode === "qr" ? 10 : 16,
         qrbox: getScannerBox(),
-        aspectRatio: state.scannerMode === "qr" ? 1 : 1.777778,
+        aspectRatio: getScannerAspectRatio(),
         formatsToSupport: state.scanFormats.length ? state.scanFormats : undefined
       },
       function (decodedText) {
@@ -1329,6 +1381,12 @@
         ui["w_lot_hint"].value = response.lotId || response.lotNo || "";
         setScannerStatus("พบข้อมูลแล้ว พร้อมบันทึกการเบิกหรือสแกนรายการถัดไป");
         state.scannerBusy = false;
+        closeWithdrawScannerScreen();
+        window.setTimeout(function () {
+          if (ui["w_qty"]) {
+            ui["w_qty"].focus();
+          }
+        }, 80);
         toast("พบข้อมูลจาก QR / Barcode แล้ว", "success");
       } else {
         setScannerStatus("อ่านได้แล้วแต่ยังไม่พบข้อมูลในระบบ ลองสแกนใหม่หรือค้นหาด้วยมือ");
