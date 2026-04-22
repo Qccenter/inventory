@@ -6,17 +6,37 @@
   --soft-slate: #e2e8f0;
   --danger: #e11d48;
   --success: #059669;
+  --safe-area-top: env(safe-area-inset-top, 0px);
+  --safe-area-right: env(safe-area-inset-right, 0px);
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-left: env(safe-area-inset-left, 0px);
+  --app-height: 100vh;
+  --tab-bar-height: 88px;
 }
 
 * {
   box-sizing: border-box;
 }
 
+html {
+  min-height: 100%;
+  height: 100%;
+  background: #f0f4f8;
+}
+
 body {
   font-family: "Outfit", "Sarabun", sans-serif;
   background: linear-gradient(135deg, #f0f4f8 0%, #e2e8f0 100%);
-  min-height: 100vh;
+  min-height: var(--app-height);
+  min-height: 100dvh;
   color: #1a202c;
+  padding-left: var(--safe-area-left);
+  padding-right: var(--safe-area-right);
+  margin: 0;
+  overscroll-behavior-y: contain;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: pan-x pan-y;
 }
 
 .glass {
@@ -155,10 +175,15 @@ body {
   background: rgba(15, 23, 42, 0.56);
   backdrop-filter: blur(4px);
   transition: opacity 0.25s ease;
+  padding-top: calc(16px + var(--safe-area-top));
+  padding-bottom: calc(16px + var(--safe-area-bottom));
 }
 
 .modal-content {
   animation: modalSlideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  max-height: calc(var(--app-height) - var(--safe-area-top) - var(--safe-area-bottom) - 32px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 @keyframes modalSlideUp {
@@ -178,13 +203,13 @@ body {
   bottom: 0;
   left: 0;
   right: 0;
-  height: 72px;
+  min-height: 72px;
   z-index: 100;
   border-top: 1px solid var(--glass-border);
   display: flex;
   justify-content: space-around;
   align-items: center;
-  padding: 0 10px;
+  padding: 6px 10px calc(8px + var(--safe-area-bottom));
 }
 
 .tab-item {
@@ -243,16 +268,29 @@ body {
 }
 
 .login-shell {
-  min-height: 100vh;
+  min-height: var(--app-height);
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: calc(24px + var(--safe-area-top)) calc(24px + var(--safe-area-right)) calc(24px + var(--safe-area-bottom)) calc(24px + var(--safe-area-left));
 }
 
 .login-card {
   width: 100%;
   max-width: 430px;
+}
+
+.app-safe-shell {
+  min-height: var(--app-height);
+  min-height: 100dvh;
+}
+
+.app-content-shell {
+  min-height: var(--app-height);
+  min-height: 100dvh;
+  padding-top: max(20px, calc(20px + var(--safe-area-top)));
+  padding-bottom: calc(var(--tab-bar-height) + 40px + var(--safe-area-bottom));
 }
 
 .status-pill {
@@ -328,6 +366,42 @@ body {
   border: 1px dashed rgba(148, 163, 184, 0.8);
 }
 
+.scanner-mode-btn {
+  border: 1px solid rgba(203, 213, 225, 1);
+  background: #ffffff;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 10px 14px;
+  border-radius: 14px;
+  transition: all 0.2s ease;
+}
+
+.scanner-mode-btn.active {
+  background: #0f172a;
+  color: #ffffff;
+  border-color: #0f172a;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.18);
+}
+
+button,
+[role="button"],
+.tab-item,
+.btn-premium,
+.scanner-mode-btn,
+a,
+input[type="button"],
+input[type="submit"] {
+  touch-action: manipulation;
+}
+
+input,
+select,
+textarea,
+button {
+  font: inherit;
+}
+
 .lot-table th,
 .lot-table td {
   white-space: nowrap;
@@ -346,5 +420,20 @@ body {
   .login-shell {
     align-items: flex-start;
     padding-top: 36px;
+  }
+
+  .app-content-shell {
+    padding-left: max(16px, calc(16px + var(--safe-area-left)));
+    padding-right: max(16px, calc(16px + var(--safe-area-right)));
+  }
+
+  .modal-content {
+    width: min(100%, 100vw - 24px);
+  }
+
+  input,
+  select,
+  textarea {
+    font-size: 16px;
   }
 }
