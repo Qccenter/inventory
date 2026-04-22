@@ -43,6 +43,7 @@
       "login-shell", "app-shell", "login-form", "login-api-url", "login-username", "login-password",
       "register-form", "auth-tab-login", "auth-tab-register", "register-fullname", "register-department", "register-username", "register-password",
       "btn-login", "btn-register", "page-title", "header-subtitle", "api-status-pill", "user-pill",
+      "global-loading", "global-loading-title", "global-loading-text",
       "btn-refresh", "btn-logout", "dashboard-loading", "dashboard-container", "expiring-widget", "expiring-items",
       "history-search", "history-list", "report-month", "admin-panel", "master-list", "user-list", "sys-token",
       "settings-api-url-text", "camera-status-text", "tab-inventory", "tab-history", "tab-settings", "tab-analytics",
@@ -126,6 +127,7 @@
 
   async function restoreSession() {
     try {
+      showGlobalLoading("กำลังกู้คืนการเข้าสู่ระบบ", "โปรดรอสักครู่ ระบบกำลังโหลดข้อมูลล่าสุด");
       setApiStatus("กำลังเชื่อมต่อ API...", "warn");
       const response = await api("session");
       state.user = response.user;
@@ -145,6 +147,8 @@
         showLoginShell();
         toast("Session หมดอายุ กรุณาเข้าสู่ระบบใหม่", "warning");
       }
+    } finally {
+      hideGlobalLoading();
     }
   }
 
@@ -159,6 +163,7 @@
     }
 
     setButtonLoading("btn-login", true, "เข้าสู่ระบบ");
+    showGlobalLoading("กำลังเข้าสู่ระบบ", "กำลังตรวจสอบบัญชีและโหลดเมนูหลัก");
 
     try {
       const passwordHash = await sha256Hex(password);
@@ -175,6 +180,7 @@
     } catch (error) {
       showApiError(error);
     } finally {
+      hideGlobalLoading();
       setButtonLoading("btn-login", false, "เข้าสู่ระบบ");
     }
   }
@@ -235,12 +241,16 @@
 
   function showLoginShell() {
     ui["login-shell"].classList.remove("hidden-force");
+    ui["login-shell"].classList.remove("hidden");
     ui["app-shell"].classList.add("hidden-force");
+    ui["app-shell"].classList.add("hidden");
   }
 
   function showAppShell() {
     ui["login-shell"].classList.add("hidden-force");
+    ui["login-shell"].classList.add("hidden");
     ui["app-shell"].classList.remove("hidden-force");
+    ui["app-shell"].classList.remove("hidden");
   }
 
   function switchAuthTab(tab) {
@@ -1283,6 +1293,18 @@
       button.innerHTML = defaultText;
       button.classList.remove("opacity-75", "cursor-not-allowed");
     }
+  }
+
+  function showGlobalLoading(title, text) {
+    if (!ui["global-loading"]) return;
+    ui["global-loading-title"].textContent = title || "กำลังโหลดข้อมูล";
+    ui["global-loading-text"].textContent = text || "โปรดรอสักครู่ ระบบกำลังประมวลผล";
+    ui["global-loading"].classList.remove("hidden-force");
+  }
+
+  function hideGlobalLoading() {
+    if (!ui["global-loading"]) return;
+    ui["global-loading"].classList.add("hidden-force");
   }
 
   function showApiError(error) {
