@@ -40,6 +40,9 @@ function handleApiRequest_(e) {
       case "login":
         response = apiLogin_(params);
         break;
+      case "register":
+        response = apiRegisterUser_(params);
+        break;
       case "session":
         response = withSession_(params, function(session) {
           return success_({ user: session.user });
@@ -281,6 +284,49 @@ function apiLogin_(params) {
   return failure_("INVALID_LOGIN", "Invalid username or password");
 }
 
+function apiRegisterUser_(params) {
+  var username = normalizeKey_(params.username);
+  var passwordHash = String(params.passwordHash || "");
+  var fullName = String(params.fullName || "").trim();
+  var department = String(params.department || "").trim();
+
+  if (!username || !passwordHash || !fullName || !department) {
+    return failure_("INVALID_REGISTER", "Username, password, full name and department are required");
+  }
+
+  if (!/^[a-z0-9._-]{3,40}$/i.test(username)) {
+    return failure_("INVALID_REGISTER", "Username must be 3-40 characters and use only letters, numbers, dot, dash or underscore");
+  }
+
+  var sheet = getSheet_(SHEET_USERS);
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    var data = sheet.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      var existing = mapUserRow_(data[i]);
+      if (normalizeKey_(existing.username) === username) {
+        return failure_("DUPLICATE_USER", "Username already exists");
+      }
+    }
+
+    sheet.appendRow([username, passwordHash, fullName, department, "USER", "ACTIVE", ""]);
+    appendAuditLog_("REGISTER", fullName, username + " / " + department);
+    return success_({
+      message: "สมัครสมาชิกสำเร็จ",
+      user: {
+        username: username,
+        fullName: fullName,
+        department: department,
+        role: "USER",
+        status: "ACTIVE"
+      }
+    });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function getSS_() {
   try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -316,6 +362,14 @@ function initializeSchema_(ss) {
 
   migrateUsersSheet_();
   seedDefaults_();
+}
+
+function initializeSchema() {
+  return resetAndSeedDemoData();
+}
+
+function setupDemoData() {
+  return resetAndSeedDemoData();
 }
 
 function ensureSheet_(ss, name, headers) {
@@ -439,13 +493,34 @@ function seedDummyData() {
 
 function resetAndSeedDemoData() {
   var ss = getSS_();
-  [SHEET_MASTER, SHEET_STOCK, SHEET_LOG, SHEET_USERS, SHEET_CONFIG, SHEET_AUDIT].forEach(function(name) {
-    var sheet = ss.getSheetByName(name);
-    if (sheet) {
-      ss.deleteSheet(sheet);
-    }
-  });
+  resetWorkbookForDemo_(ss);
   initializeSchema_(ss);
+  return {
+    success: true,
+    spreadsheetId: ss.getId(),
+    spreadsheetName: ss.getName(),
+    sheets: ss.getSheets().map(function(sheet) { return sheet.getName(); }),
+    message: "Workbook was reset and seeded with demo data"
+  };
+}
+
+function resetWorkbookForDemo_(ss) {
+  var sheets = ss.getSheets();
+  if (!sheets.length) {
+    ss.insertSheet("Temp_Init");
+    sheets = ss.getSheets();
+  }
+
+  var primarySheet = sheets[0];
+  for (var i = sheets.length - 1; i >= 1; i--) {
+    ss.deleteSheet(sheets[i]);
+  }
+
+  primarySheet.clear();
+  primarySheet.clearFormats();
+  if (primarySheet.getName() !== SHEET_MASTER) {
+    primarySheet.setName(SHEET_MASTER);
+  }
 }
 
 function getDashboardItems_() {
